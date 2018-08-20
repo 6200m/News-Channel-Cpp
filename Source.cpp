@@ -4,23 +4,46 @@
 
 #include "Source.h"
 
-std::shared_ptr<std::vector<std::shared_ptr<ArticleData>>> Source::parse() const {
- std::vector<std::thread> threads;
+std::vector<ArticleData> Source::parse() const {
+	std::vector<std::thread> threads;
+	std::vector<ArticleData> articles;
+	std::mutex threadsLock, articlesLock;
 
- for (auto& category : categories)
-	threads.emplace_back(std::thread([&] () {
-	 std::cout << "Downloading " << category.first << "..." << std::endl;
+	for (auto &category : feedCategories) {
+	 threadsLock.lock();
+	 threads.emplace_back(std::thread([&]() {
+		std::string categoryData;
+		Logger().info << "Downloading " << category.first << "..." << std::endl;
+		//CURLcode result = CurlWrapper::get((boost::format(url) % category.first).str().c_str(), &categoryData);
+		// Debug "data"
+		CURLcode result = CURLE_OK;
+		categoryData = "This is the first example article\nThis is the second example article\nThis is the third example article";
 
-	 std::string categoryData;
-	 CURLcode result = CurlWrapper::get((boost::format(url) % category.first).str().c_str(), &categoryData);
-	 if (!result) {
-		std::cout << "Finished downloading " << category.first << "! " << categoryData.length() << std::endl;
-	  categoryParser(category.first, categoryData, this); // Parse category site data per source
-	 } else {
-		std::cerr << "Error requesting category " << category.second << " for " << name << ": " << curl_easy_strerror(result) << std::endl;
-	 }
-	}));
+		if (!result) {
+		 Logger().info << "Finished downloading " << category.second << "! " << categoryData.length() << std::endl;
+		 auto categoryFeed = categoryParser(category.first, categoryData, this); // Parse category site data per source
+		 if (categoryFeed) {
+			for (auto &articleData : *categoryFeed) {
+			 //std::lock_guard<std::mutex> articleParsingThreadLockGuard(threadsLock);
+			 //threads.emplace_back(std::thread([&]() { // Start thread per article parsing, probably overkill
+				auto article = articleParser(articleData, this);
+				if (article) {
+				 std::lock_guard<std::mutex> articlesLockGuard(articlesLock);
+				 articles.emplace_back(article.value());
+				}
+			 //}));
+			}
+		 }
+		} else {
+		 Logger().error << "Error requesting category " << category.second << " for " << name << ": "
+							 << curl_easy_strerror(result) << std::endl;
+		}
+	 }));
+	 threadsLock.unlock();
+	}
 
- for (auto& thread : threads)
-  thread.join();
+	// Wait for all threads to finish
+	for (auto &thread : threads) thread.join();
+
+	return articles;
 }
